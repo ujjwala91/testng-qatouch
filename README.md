@@ -86,21 +86,21 @@ Set these as **environment variables** or **Java system properties** (`-D`):
 
 ```bash
 mvn test \
-  -Dqatouch.domain=xrite \
+  -Dqatouch.domain=your-domain \
   -Dqatouch.apiToken=your-token \
-  -Dqatouch.projectKey=Xb3Z \
-  -Dqatouch.testsuiteId=q7pg7 \
-  -Dqatouch.assignTo=1NdK
+  -Dqatouch.projectKey=YOUR_PROJECT_KEY \
+  -Dqatouch.testsuiteId=YOUR_TESTSUITE_ID \
+  -Dqatouch.assignTo=YOUR_USER_KEY
 ```
 
 ### Example: Running with environment variables
 
 ```bash
-export QATOUCH_DOMAIN=xrite
+export QATOUCH_DOMAIN=your-domain
 export QATOUCH_API_TOKEN=your-token
-export QATOUCH_PROJECT_KEY=Xb3Z
-export QATOUCH_TESTSUITE_ID=q7pg7
-export QATOUCH_ASSIGN_TO=1NdK
+export QATOUCH_PROJECT_KEY=YOUR_PROJECT_KEY
+export QATOUCH_TESTSUITE_ID=YOUR_TESTSUITE_ID
+export QATOUCH_ASSIGN_TO=YOUR_USER_KEY
 mvn test
 ```
 
@@ -129,11 +129,11 @@ Titles are normalized (lowercased, special characters removed) for fuzzy matchin
 - name: Run TestNG tests
   run: mvn test
   env:
-    QATOUCH_DOMAIN: xrite
+    QATOUCH_DOMAIN: your-domain
     QATOUCH_API_TOKEN: ${{ secrets.QATOUCH_API_TOKEN }}
-    QATOUCH_PROJECT_KEY: Xb3Z
-    QATOUCH_TESTSUITE_ID: q7pg7
-    QATOUCH_ASSIGN_TO: 1NdK
+    QATOUCH_PROJECT_KEY: ${{ secrets.QATOUCH_PROJECT_KEY }}
+    QATOUCH_TESTSUITE_ID: YOUR_TESTSUITE_ID
+    QATOUCH_ASSIGN_TO: YOUR_USER_KEY
 ```
 
 ## How It Works
