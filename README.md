@@ -17,7 +17,7 @@ Add the JAR to your project, or install with Maven:
 
 ```xml
 <dependency>
-    <groupId>com.qatouch</groupId>
+  <groupId>io.github.ujjwala91</groupId>
     <artifactId>testng-qatouch</artifactId>
     <version>1.0.0</version>
 </dependency>
@@ -30,7 +30,7 @@ Add the JAR to your project, or install with Maven:
 ```xml
 <suite name="My Suite">
   <listeners>
-    <listener class-name="com.qatouch.QATouchListener"/>
+    <listener class-name="io.github.ujjwala91.QATouchListener"/>
   </listeners>
   <test name="My Tests">
     <classes>
@@ -43,6 +43,8 @@ Add the JAR to your project, or install with Maven:
 ### Option 2: Programmatic
 
 ```java
+import io.github.ujjwala91.QATouchListener;
+
 TestNG tng = new TestNG();
 tng.addListener(new QATouchListener());
 tng.setTestSuites(List.of("testng.xml"));
@@ -52,6 +54,8 @@ tng.run();
 ### Option 3: @Listeners annotation
 
 ```java
+import io.github.ujjwala91.QATouchListener;
+
 @Listeners(QATouchListener.class)
 public class MyTests {
     @Test(description = "should display the home page title")
@@ -143,6 +147,21 @@ Titles are normalized (lowercased, special characters removed) for fuzzy matchin
 ```bash
 mvn clean package
 ```
+
+## Smoke Test As A Dependency
+
+This repository includes a tiny consumer project at `consumer-smoke-test/` that
+uses the published coordinates as a normal dependency and runs a basic TestNG
+suite.
+
+```bash
+cd consumer-smoke-test
+mvn test
+```
+
+Without QA Touch environment variables, the listener disables itself and the
+test still passes. That is enough to verify dependency resolution, listener
+loading, and TestNG integration.
 
 ## License
 

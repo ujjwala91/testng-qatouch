@@ -22,8 +22,8 @@
 
     <developers>
         <developer>
-            <name>Your Name</name>
-            <email>your-email@example.com</email>
+            <name>UjjwalaMeena</name>
+            <email>ujjwala.mandipati@gmail.com</email>
             <organization>QA Touch</organization>
             <organizationUrl>https://www.qatouch.com</organizationUrl>
         </developer>
@@ -94,6 +94,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-gpg-plugin</artifactId>
                 <version>3.2.4</version>
+                <configuration>
+                    <executable>C:\Program Files\GnuPG\bin\gpg.exe</executable>
+                </configuration>
                 <executions>
                     <execution>
                         <id>sign-artifacts</id>

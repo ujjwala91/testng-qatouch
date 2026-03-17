@@ -57,8 +57,17 @@ public class QATouchClient {
         return normalizeList(response);
     }
 
-    public void createMilestone(String name) throws IOException {
-        request("POST", "/milestone?projectKey=" + enc(projectKey) + "&milestone=" + enc(name));
+    public JsonObject createMilestone(String name) throws IOException {
+        JsonElement response = request("POST", "/milestone?projectKey=" + enc(projectKey) + "&milestone=" + enc(name));
+        if (response.isJsonObject()) {
+            JsonObject obj = response.getAsJsonObject();
+            if (obj.has("data") && obj.get("data").isJsonObject()) {
+                return obj.getAsJsonObject("data");
+            }
+            return obj;
+        }
+        List<JsonObject> list = normalizeList(response);
+        return list.isEmpty() ? new JsonObject() : list.get(0);
     }
 
     // ── Test Runs ────────────────────────────────────────────────────────

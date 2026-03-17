@@ -221,19 +221,24 @@ public class QATouchListener implements ISuiteListener, ITestListener {
     private String resolveMilestone(String milestoneName) throws IOException {
         List<JsonObject> milestones = client.getMilestones();
         for (JsonObject m : milestones) {
-            String name = getStringField(m, "milestone", "name", "title");
-            String key = getStringField(m, "milestone_key", "key", "milestoneKey", "id");
+            String name = getStringField(m, "milestone_name", "milestone", "name", "title");
+            String key = getStringField(m, "milestone_key", "key", "milestoneKey", "api_key", "apiKey", "id");
             if (milestoneName.equalsIgnoreCase(name) && key != null) {
                 return key;
             }
         }
 
         // Create milestone
-        client.createMilestone(milestoneName);
+        JsonObject created = client.createMilestone(milestoneName);
+        String createdKey = getStringField(created, "milestone_key", "key", "milestoneKey", "api_key", "apiKey", "id");
+        if (createdKey != null) {
+            return createdKey;
+        }
+
         milestones = client.getMilestones();
         for (JsonObject m : milestones) {
-            String name = getStringField(m, "milestone", "name", "title");
-            String key = getStringField(m, "milestone_key", "key", "milestoneKey", "id");
+            String name = getStringField(m, "milestone_name", "milestone", "name", "title");
+            String key = getStringField(m, "milestone_key", "key", "milestoneKey", "api_key", "apiKey", "id");
             if (milestoneName.equalsIgnoreCase(name) && key != null) {
                 return key;
             }
