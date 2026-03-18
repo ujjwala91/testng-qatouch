@@ -38,6 +38,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class QATouchListener implements ISuiteListener, ITestListener {
 
+    /** Creates a new listener instance. */
+    public QATouchListener() {
+    }
+
     private QATouchConfig config;
     private QATouchClient client;
     private String testRunKey;
@@ -59,7 +63,7 @@ public class QATouchListener implements ISuiteListener, ITestListener {
         if (!config.isValid()) {
             System.out.println("[qatouch] Missing required config. Listener disabled.");
             System.out.println(
-                    "[qatouch] Set: QATOUCH_DOMAIN, QATOUCH_API_TOKEN, QATOUCH_PROJECT_KEY, QATOUCH_TESTSUITE_ID, QATOUCH_ASSIGN_TO");
+                    "[qatouch] Set: QATOUCH_DOMAIN, QATOUCH_API_TOKEN, QATOUCH_PROJECT_KEY, QATOUCH_ASSIGN_TO, and QATOUCH_TESTSUITE_ID (or QATOUCH_SYNC=true to auto-create modules)");
             initFailed = true;
             return;
         }
@@ -84,7 +88,9 @@ public class QATouchListener implements ISuiteListener, ITestListener {
             return;
         }
 
-        List<QATouchClient.CaseResult> results = new ArrayList<>();
+        List<QATouchClient.CaseResult> bulkResults = new ArrayList<>();
+        List<Map.Entry<String, CollectedResult>> detailedResults = new ArrayList<>();
+
         for (Map.Entry<String, CollectedResult> entry : resultsByTitle.entrySet()) {
             String caseKey = caseMap.get(entry.getKey());
             if (caseKey == null) {
@@ -92,22 +98,52 @@ public class QATouchListener implements ISuiteListener, ITestListener {
                 continue;
             }
             CollectedResult cr = entry.getValue();
-            results.add(new QATouchClient.CaseResult(caseKey, statusToId(cr.status)));
             System.out.println("[qatouch] " + cr.title + " -> " + cr.status);
+
+            // Use individual endpoint for failed tests with error details or screenshots
+            if ("failed".equals(cr.status) && (cr.errorMessage != null || cr.screenshotPath != null)) {
+                detailedResults.add(entry);
+            } else {
+                bulkResults.add(new QATouchClient.CaseResult(caseKey, statusToId(cr.status)));
+            }
         }
 
-        if (results.isEmpty()) {
+        if (bulkResults.isEmpty() && detailedResults.isEmpty()) {
             System.out.println("[qatouch] No results to upload.");
             return;
         }
 
+        int uploadedCount = 0;
         try {
-            JsonObject response = client.updateResults(testRunKey, results);
-            if (response.has("error")) {
-                System.err.println("[qatouch] API error: " + response.get("error").getAsString());
-            } else {
-                System.out.println("[qatouch] Uploaded " + results.size() + " result(s) to test run " + testRunKey);
+            // Upload failed tests individually with error messages and screenshots
+            for (Map.Entry<String, CollectedResult> entry : detailedResults) {
+                String caseKey = caseMap.get(entry.getKey());
+                CollectedResult cr = entry.getValue();
+                try {
+                    client.addResultWithComment(testRunKey, caseKey, statusToId(cr.status),
+                            cr.errorMessage, cr.screenshotPath);
+                    uploadedCount++;
+                    System.out.println("[qatouch] Uploaded failed result with details: " + cr.title
+                            + (cr.screenshotPath != null ? " (with screenshot)" : ""));
+                } catch (IOException e) {
+                    System.err.println(
+                            "[qatouch] Failed to upload detailed result for " + cr.title + ": " + e.getMessage());
+                    // Fall back to bulk for this one
+                    bulkResults.add(new QATouchClient.CaseResult(caseKey, statusToId(cr.status)));
+                }
             }
+
+            // Bulk upload the rest
+            if (!bulkResults.isEmpty()) {
+                JsonObject response = client.updateResults(testRunKey, bulkResults);
+                if (response.has("error")) {
+                    System.err.println("[qatouch] API error: " + response.get("error").getAsString());
+                } else {
+                    uploadedCount += bulkResults.size();
+                }
+            }
+
+            System.out.println("[qatouch] Uploaded " + uploadedCount + " result(s) to test run " + testRunKey);
         } catch (IOException e) {
             System.err.println("[qatouch] Upload failed: " + e.getMessage());
         }
@@ -143,60 +179,79 @@ public class QATouchListener implements ISuiteListener, ITestListener {
     // ── Initialization ───────────────────────────────────────────────────
 
     private void initialize(ISuite suite) throws IOException {
-        // 1. Collect all test method names from the suite
-        List<String> testTitles = collectTestTitles(suite);
-        if (testTitles.isEmpty()) {
-            System.out.println("[qatouch] No tests found in suite.");
-            return;
-        }
+        if (config.isSync()) {
+            // Full sync: resolve modules, compare/create test cases
+            Map<String, String> moduleMap = resolveModules(suite);
 
-        // 2. Fetch existing test cases from QA Touch
-        List<JsonObject> existingCases = client.getTestCases(config.getTestsuiteId());
-        for (JsonObject item : existingCases) {
-            String title = getStringField(item, "title", "case_title");
-            String key = getStringField(item, "case_key", "caseKey", "key", "api_key", "apiKey", "id");
-            if (title != null && key != null) {
-                caseMap.put(normalizeTitle(title), key);
+            Map<String, List<String>> titlesByModule = collectTestTitlesByModule(suite, moduleMap);
+            if (titlesByModule.isEmpty()) {
+                System.out.println("[qatouch] No tests found in suite.");
+                return;
             }
-        }
 
-        // 3. Create missing test cases
-        if (config.isCreateCases()) {
-            for (String title : testTitles) {
-                String normalized = normalizeTitle(title);
-                if (caseMap.containsKey(normalized)) {
-                    System.out.println("[qatouch] Matched: " + title + " -> " + caseMap.get(normalized));
-                    continue;
-                }
+            for (Map.Entry<String, List<String>> entry : titlesByModule.entrySet()) {
+                String moduleKey = entry.getKey();
+                List<String> titles = entry.getValue();
 
-                System.out.println("[qatouch] Creating case: " + title);
-                client.createTestCase(
-                        config.getTestsuiteId(),
-                        title,
-                        "Automated TestNG scenario.",
-                        "",
-                        "TestNG environment is configured and the application under test is reachable.",
-                        buildStepsTemplate(title));
-
-                // Re-fetch to get the new key
-                List<JsonObject> refreshed = client.getTestCases(config.getTestsuiteId());
-                for (JsonObject item : refreshed) {
-                    String t = getStringField(item, "title", "case_title");
-                    String k = getStringField(item, "case_key", "caseKey", "key", "api_key", "apiKey", "id");
-                    if (t != null && k != null) {
-                        caseMap.put(normalizeTitle(t), k);
+                List<JsonObject> existingCases = client.getTestCases(moduleKey);
+                for (JsonObject item : existingCases) {
+                    String title = getStringField(item, "title", "case_title");
+                    String key = getStringField(item, "case_key", "caseKey", "key", "api_key", "apiKey", "id");
+                    if (title != null && key != null) {
+                        caseMap.put(normalizeTitle(title), key);
                     }
                 }
 
-                if (caseMap.containsKey(normalized)) {
-                    System.out.println("[qatouch] Created: " + title + " -> " + caseMap.get(normalized));
+                if (config.isCreateCases()) {
+                    for (String title : titles) {
+                        String normalized = normalizeTitle(title);
+                        if (caseMap.containsKey(normalized)) {
+                            System.out.println("[qatouch] Matched: " + title + " -> " + caseMap.get(normalized));
+                            continue;
+                        }
+
+                        System.out.println("[qatouch] Creating case: " + title + " (module: " + moduleKey + ")");
+                        client.createTestCase(
+                                moduleKey,
+                                title,
+                                "Automated TestNG scenario.",
+                                "",
+                                "TestNG environment is configured and the application under test is reachable.",
+                                buildStepsTemplate(title));
+
+                        List<JsonObject> refreshed = client.getTestCases(moduleKey);
+                        for (JsonObject item : refreshed) {
+                            String t = getStringField(item, "title", "case_title");
+                            String k = getStringField(item, "case_key", "caseKey", "key", "api_key", "apiKey", "id");
+                            if (t != null && k != null) {
+                                caseMap.put(normalizeTitle(t), k);
+                            }
+                        }
+
+                        if (caseMap.containsKey(normalized)) {
+                            System.out.println("[qatouch] Created: " + title + " -> " + caseMap.get(normalized));
+                        }
+                    }
                 }
+            }
+        } else {
+            // No sync: just fetch existing cases from configured module for result mapping
+            System.out.println("[qatouch] Sync disabled. Skipping module/case creation.");
+            if (config.getTestsuiteId() != null) {
+                List<JsonObject> existingCases = client.getTestCases(config.getTestsuiteId());
+                for (JsonObject item : existingCases) {
+                    String title = getStringField(item, "title", "case_title");
+                    String key = getStringField(item, "case_key", "caseKey", "key", "api_key", "apiKey", "id");
+                    if (title != null && key != null) {
+                        caseMap.put(normalizeTitle(title), key);
+                    }
+                }
+                System.out.println("[qatouch] Loaded " + caseMap.size() + " existing case(s) for result mapping.");
             }
         }
 
-        // 4. Create test run
+        // Create test run (applies to both sync and no-sync modes)
         if (config.isCreateTestRun() && !caseMap.isEmpty()) {
-            // Resolve milestone
             String milestoneKey = config.getMilestoneKey();
             if (milestoneKey == null) {
                 milestoneKey = resolveMilestone(config.getMilestoneName());
@@ -246,6 +301,125 @@ public class QATouchListener implements ISuiteListener, ITestListener {
         throw new IOException("Failed to resolve milestone: " + milestoneName);
     }
 
+    /**
+     * Resolves QA Touch modules. When sync is enabled and no testsuiteId is set,
+     * each {@code <test>} block in the suite becomes a QA Touch module (created
+     * if missing). Otherwise, falls back to the configured testsuiteId.
+     */
+    private Map<String, String> resolveModules(ISuite suite) throws IOException {
+        // testName -> moduleKey
+        Map<String, String> moduleMap = new LinkedHashMap<>();
+
+        if (config.getTestsuiteId() != null) {
+            // Use the single configured testsuite/module for everything
+            for (org.testng.xml.XmlTest xmlTest : suite.getXmlSuite().getTests()) {
+                moduleMap.put(xmlTest.getName(), config.getTestsuiteId());
+            }
+            if (moduleMap.isEmpty() && config.getTestsuiteId() != null) {
+                moduleMap.put(suite.getName(), config.getTestsuiteId());
+            }
+            return moduleMap;
+        }
+
+        // Fetch existing modules from QA Touch
+        List<JsonObject> existingModules = client.getModules();
+        Map<String, String> existingByName = new LinkedHashMap<>();
+        for (JsonObject m : existingModules) {
+            String name = getStringField(m, "module_name", "name", "title", "sectionName");
+            String key = getStringField(m, "module_key", "key", "sectionKey", "api_key", "apiKey", "id");
+            if (name != null && key != null) {
+                existingByName.put(name.toLowerCase().trim(), key);
+            }
+        }
+
+        // Use the configured testsuiteId as parent for new child modules, if set
+        String parentKey = config.getTestsuiteId();
+
+        for (org.testng.xml.XmlTest xmlTest : suite.getXmlSuite().getTests()) {
+            String testName = xmlTest.getName();
+            String normalizedName = testName.toLowerCase().trim();
+
+            if (existingByName.containsKey(normalizedName)) {
+                String key = existingByName.get(normalizedName);
+                moduleMap.put(testName, key);
+                System.out.println("[qatouch] Matched module: " + testName + " -> " + key);
+            } else {
+                System.out.println("[qatouch] Creating module: " + testName);
+                JsonObject created = client.createModule(testName, parentKey);
+                String createdKey = getStringField(created, "module_key", "key", "sectionKey", "api_key", "apiKey",
+                        "id");
+
+                if (createdKey == null) {
+                    // Re-fetch modules to find the newly created one
+                    existingModules = client.getModules();
+                    for (JsonObject m : existingModules) {
+                        String n = getStringField(m, "module_name", "name", "title", "sectionName");
+                        String k = getStringField(m, "module_key", "key", "sectionKey", "api_key", "apiKey", "id");
+                        if (n != null && k != null) {
+                            existingByName.put(n.toLowerCase().trim(), k);
+                        }
+                    }
+                    createdKey = existingByName.get(normalizedName);
+                }
+
+                if (createdKey != null) {
+                    moduleMap.put(testName, createdKey);
+                    existingByName.put(normalizedName, createdKey);
+                    System.out.println("[qatouch] Created module: " + testName + " -> " + createdKey);
+                } else {
+                    System.err.println("[qatouch] Failed to create module: " + testName);
+                }
+            }
+        }
+
+        return moduleMap;
+    }
+
+    /**
+     * Groups test titles by their target module key based on which {@code <test>}
+     * block they belong to.
+     */
+    private Map<String, List<String>> collectTestTitlesByModule(
+            ISuite suite, Map<String, String> moduleMap) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+
+        for (org.testng.xml.XmlTest xmlTest : suite.getXmlSuite().getTests()) {
+            String moduleKey = moduleMap.get(xmlTest.getName());
+            if (moduleKey == null)
+                continue;
+
+            List<String> titles = result.computeIfAbsent(moduleKey, k -> new ArrayList<>());
+            // Collect methods from this <test> block
+            for (org.testng.xml.XmlClass xmlClass : xmlTest.getClasses()) {
+                try {
+                    Class<?> clazz = Class.forName(xmlClass.getName());
+                    for (java.lang.reflect.Method method : clazz.getMethods()) {
+                        org.testng.annotations.Test testAnnotation = method
+                                .getAnnotation(org.testng.annotations.Test.class);
+                        if (testAnnotation != null) {
+                            String title = (testAnnotation.description() != null
+                                    && !testAnnotation.description().isEmpty())
+                                            ? testAnnotation.description()
+                                            : method.getName();
+                            titles.add(title);
+                        }
+                    }
+                } catch (ClassNotFoundException e) {
+                    System.err.println("[qatouch] Class not found: " + xmlClass.getName());
+                }
+            }
+        }
+
+        // Fallback: if no <test> blocks resolved, use all methods with the first
+        // available module
+        if (result.isEmpty() && !moduleMap.isEmpty()) {
+            String fallbackKey = moduleMap.values().iterator().next();
+            result.put(fallbackKey, collectTestTitles(suite));
+        }
+
+        return result;
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private void collectResult(ITestResult result, String status) {
@@ -256,9 +430,35 @@ public class QATouchListener implements ISuiteListener, ITestListener {
         }
         String normalized = normalizeTitle(title);
 
-        resultsByTitle.merge(normalized, new CollectedResult(title, status),
+        // Extract error message from throwable
+        String errorMessage = null;
+        if (result.getThrowable() != null) {
+            Throwable t = result.getThrowable();
+            StringBuilder sb = new StringBuilder();
+            sb.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage());
+            StackTraceElement[] trace = t.getStackTrace();
+            for (int i = 0; i < Math.min(trace.length, 5); i++) {
+                sb.append("\n  at ").append(trace[i]);
+            }
+            errorMessage = sb.toString();
+        }
+
+        // Extract screenshot path from test attribute
+        String screenshotPath = null;
+        Object screenshotAttr = result.getAttribute("screenshot");
+        if (screenshotAttr != null) {
+            screenshotPath = screenshotAttr.toString();
+        }
+
+        final String errMsg = errorMessage;
+        final String ssPath = screenshotPath;
+        resultsByTitle.merge(normalized, new CollectedResult(title, status, errorMessage, screenshotPath),
                 (existing, incoming) -> {
                     existing.status = combineStatuses(existing.status, incoming.status);
+                    if (errMsg != null)
+                        existing.errorMessage = errMsg;
+                    if (ssPath != null)
+                        existing.screenshotPath = ssPath;
                     return existing;
                 });
     }
@@ -340,10 +540,14 @@ public class QATouchListener implements ISuiteListener, ITestListener {
     private static class CollectedResult {
         final String title;
         String status;
+        String errorMessage;
+        String screenshotPath;
 
-        CollectedResult(String title, String status) {
+        CollectedResult(String title, String status, String errorMessage, String screenshotPath) {
             this.title = title;
             this.status = status;
+            this.errorMessage = errorMessage;
+            this.screenshotPath = screenshotPath;
         }
     }
 }

@@ -6,6 +6,7 @@ import com.google.gson.reflect.TypeToken;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 import java.util.*;
 
 import javax.net.ssl.HttpsURLConnection;
@@ -23,6 +24,13 @@ public class QATouchClient {
     private final String projectKey;
     private final Gson gson = new Gson();
 
+    /**
+     * Creates a new QA Touch API client.
+     *
+     * @param domain     the QA Touch domain
+     * @param apiToken   the API authentication token
+     * @param projectKey the project key
+     */
     public QATouchClient(String domain, String apiToken, String projectKey) {
         this.domain = domain;
         this.apiToken = apiToken;
@@ -31,12 +39,30 @@ public class QATouchClient {
 
     // ── Test Cases ───────────────────────────────────────────────────────
 
+    /**
+     * Retrieves all test cases for a given module.
+     *
+     * @param moduleKey the module key to fetch cases from
+     * @return list of test case JSON objects
+     * @throws IOException if the API call fails
+     */
     public List<JsonObject> getTestCases(String moduleKey) throws IOException {
         String endpoint = "/getAllTestCases/" + projectKey + "?moduleKey=" + enc(moduleKey) + "&page=1";
         JsonElement response = request("GET", endpoint);
         return normalizeList(response);
     }
 
+    /**
+     * Creates a new test case with step template in the given module.
+     *
+     * @param moduleKey     the module key to create the case under
+     * @param title         the test case title
+     * @param description   the test case description
+     * @param reference     the test case reference
+     * @param precondition  the test case precondition
+     * @param stepsTemplate URL-encoded JSON steps template
+     * @throws IOException if the API call fails
+     */
     public void createTestCase(String moduleKey, String title, String description,
             String reference, String precondition, String stepsTemplate) throws IOException {
         String endpoint = "/testCase/steps"
@@ -46,17 +72,71 @@ public class QATouchClient {
                 + "&description=" + enc(description)
                 + "&reference=" + enc(reference)
                 + "&precondition=" + enc(precondition)
-                + "&steps_template=" + stepsTemplate;
+                + "&steps_template=" + stepsTemplate
+                + "&mode=automation";
         request("POST", endpoint);
+    }
+
+    // ── Modules / Sections ───────────────────────────────────────────────
+
+    /**
+     * Retrieves all modules for the project.
+     *
+     * @return list of module JSON objects
+     * @throws IOException if the API call fails
+     */
+    public List<JsonObject> getModules() throws IOException {
+        JsonElement response = request("POST", "/getAllModules/" + projectKey);
+        return normalizeList(response);
+    }
+
+    /**
+     * Creates a new module in the project.
+     *
+     * @param moduleName the name of the module to create
+     * @param parentKey  optional parent module key for creating child modules
+     * @return the created module as a JSON object
+     * @throws IOException if the API call fails
+     */
+    public JsonObject createModule(String moduleName, String parentKey) throws IOException {
+        StringBuilder sb = new StringBuilder("/module");
+        sb.append("?projectKey=").append(enc(projectKey));
+        sb.append("&moduleName=").append(enc(moduleName));
+        if (parentKey != null && !parentKey.isEmpty()) {
+            sb.append("&parentKey=").append(enc(parentKey));
+        }
+        JsonElement response = request("POST", sb.toString());
+        if (response.isJsonObject()) {
+            JsonObject obj = response.getAsJsonObject();
+            if (obj.has("data") && obj.get("data").isJsonObject()) {
+                return obj.getAsJsonObject("data");
+            }
+            return obj;
+        }
+        List<JsonObject> list = normalizeList(response);
+        return list.isEmpty() ? new JsonObject() : list.get(0);
     }
 
     // ── Milestones ───────────────────────────────────────────────────────
 
+    /**
+     * Retrieves all milestones (releases) for the project.
+     *
+     * @return list of milestone JSON objects
+     * @throws IOException if the API call fails
+     */
     public List<JsonObject> getMilestones() throws IOException {
         JsonElement response = request("GET", "/getAllMilestones/" + projectKey);
         return normalizeList(response);
     }
 
+    /**
+     * Creates a new milestone (release) in the project.
+     *
+     * @param name the milestone name
+     * @return the created milestone as a JSON object
+     * @throws IOException if the API call fails
+     */
     public JsonObject createMilestone(String name) throws IOException {
         JsonElement response = request("POST", "/milestone?projectKey=" + enc(projectKey) + "&milestone=" + enc(name));
         if (response.isJsonObject()) {
@@ -72,6 +152,17 @@ public class QATouchClient {
 
     // ── Test Runs ────────────────────────────────────────────────────────
 
+    /**
+     * Creates a test run with specific test cases.
+     *
+     * @param milestoneKey the milestone key to associate
+     * @param title        the test run title
+     * @param assignTo     the user key to assign the run to
+     * @param caseKeys     list of test case keys to include
+     * @param tags         optional tags for the test run
+     * @return the created test run as a JSON object
+     * @throws IOException if the API call fails
+     */
     public JsonObject createTestRun(String milestoneKey, String title, String assignTo,
             List<String> caseKeys, String tags) throws IOException {
         StringBuilder sb = new StringBuilder("/testRun/specific");
@@ -105,6 +196,14 @@ public class QATouchClient {
 
     // ── Results ──────────────────────────────────────────────────────────
 
+    /**
+     * Updates the status of multiple test run results in bulk.
+     *
+     * @param testRunKey the test run key
+     * @param results    list of case results with status
+     * @return the API response as a JSON object
+     * @throws IOException if the API call fails
+     */
     public JsonObject updateResults(String testRunKey, List<CaseResult> results) throws IOException {
         JsonObject casesObj = new JsonObject();
         for (int i = 0; i < results.size(); i++) {
@@ -120,6 +219,62 @@ public class QATouchClient {
                 + "&cases=" + enc(gson.toJson(casesObj));
         JsonElement response = request("POST", endpoint);
         return response.isJsonObject() ? response.getAsJsonObject() : new JsonObject();
+    }
+
+    /**
+     * Adds a result for a single test case with optional comments and file
+     * attachment.
+     * Uses the /testRunResults/add/results endpoint which supports multipart file
+     * uploads.
+     *
+     * @param testRunKey     the test run key
+     * @param caseKey        the test case key
+     * @param statusId       the status ID (1=passed, 5=failed, etc.)
+     * @param comments       optional comment text (e.g. error message)
+     * @param screenshotPath optional path to a screenshot file to attach
+     * @return the API response as a JSON object
+     * @throws IOException if the API call fails
+     */
+    public JsonObject addResultWithComment(String testRunKey, String caseKey, int statusId,
+            String comments, String screenshotPath) throws IOException {
+        String statusName = statusIdToName(statusId);
+        StringBuilder sb = new StringBuilder("/testRunResults/add/results");
+        sb.append("?status=").append(enc(statusName));
+        sb.append("&project=").append(enc(projectKey));
+        sb.append("&test_run=").append(enc(testRunKey));
+        sb.append("&run_result[]=CASE").append(enc(caseKey));
+        if (comments != null && !comments.isEmpty()) {
+            sb.append("&comments=").append(enc(comments));
+        }
+
+        if (screenshotPath != null && !screenshotPath.isEmpty()) {
+            Path file = Paths.get(screenshotPath);
+            if (Files.exists(file) && Files.size(file) <= 2 * 1024 * 1024) {
+                return multipartRequest(sb.toString(), file);
+            }
+        }
+
+        JsonElement response = request("POST", sb.toString());
+        return response.isJsonObject() ? response.getAsJsonObject() : new JsonObject();
+    }
+
+    private static String statusIdToName(int id) {
+        switch (id) {
+            case 1:
+                return "passed";
+            case 3:
+                return "blocked";
+            case 4:
+                return "retest";
+            case 5:
+                return "failed";
+            case 6:
+                return "not-applicable";
+            case 7:
+                return "in-progress";
+            default:
+                return "untested";
+        }
     }
 
     // ── HTTP plumbing ────────────────────────────────────────────────────
@@ -174,6 +329,52 @@ public class QATouchClient {
         }
     }
 
+    private JsonObject multipartRequest(String endpoint, Path file) throws IOException {
+        String boundary = "----QATouchBoundary" + System.currentTimeMillis();
+        URL url = new URL(BASE_URL + endpoint);
+        HttpsURLConnection conn = (HttpsURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("api-token", apiToken);
+        conn.setRequestProperty("domain", domain);
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        conn.setDoOutput(true);
+        conn.setDoInput(true);
+
+        String fileName = file.getFileName().toString();
+        String mimeType = Files.probeContentType(file);
+        if (mimeType == null)
+            mimeType = "application/octet-stream";
+
+        try (OutputStream os = conn.getOutputStream()) {
+            // File part
+            os.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+            os.write(("Content-Disposition: form-data; name=\"file[]\"; filename=\"" + fileName + "\"\r\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            os.write(("Content-Type: " + mimeType + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            Files.copy(file, os);
+            os.write("\r\n".getBytes(StandardCharsets.UTF_8));
+            // Closing boundary
+            os.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        }
+
+        int status = conn.getResponseCode();
+        InputStream is = (status >= 200 && status < 300) ? conn.getInputStream() : conn.getErrorStream();
+        String body = readStream(is);
+        conn.disconnect();
+
+        if (body == null || body.isEmpty())
+            return new JsonObject();
+        try {
+            JsonElement parsed = JsonParser.parseString(body);
+            if (status >= 200 && status < 300) {
+                return parsed.isJsonObject() ? parsed.getAsJsonObject() : new JsonObject();
+            }
+            throw new IOException("API Error " + status + " for " + endpoint);
+        } catch (JsonSyntaxException e) {
+            throw new IOException("Non-JSON response (" + status + ") for " + endpoint);
+        }
+    }
+
     private List<JsonObject> normalizeList(JsonElement response) {
         if (response.isJsonArray()) {
             return gson.fromJson(response, new TypeToken<List<JsonObject>>() {
@@ -199,10 +400,21 @@ public class QATouchClient {
 
     // ── Helper class ─────────────────────────────────────────────────────
 
+    /**
+     * Holds a test case key and its result status ID.
+     */
     public static class CaseResult {
+        /** The test case key. */
         public final String caseKey;
+        /** The status ID (1=passed, 2=untested, 3=blocked, 5=failed). */
         public final int statusId;
 
+        /**
+         * Creates a new case result.
+         *
+         * @param caseKey  the test case key
+         * @param statusId the status ID
+         */
         public CaseResult(String caseKey, int statusId) {
             this.caseKey = caseKey;
             this.statusId = statusId;
