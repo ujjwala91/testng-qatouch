@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.ujjwala91</groupId>
+    <artifactId>consumer-smoke-test</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.ujjwala91</groupId>
+            <artifactId>testng-qatouch</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>7.10.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.11.0</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <suiteXmlFiles>
+                        <suiteXmlFile>testng.xml</suiteXmlFile>
+                    </suiteXmlFiles>
+                    <environmentVariables>
+                        <QATOUCH_DOMAIN>${env.QATOUCH_DOMAIN}</QATOUCH_DOMAIN>
+                        <QATOUCH_API_TOKEN>${env.QATOUCH_API_TOKEN}</QATOUCH_API_TOKEN>
+                        <QATOUCH_PROJECT_KEY>${env.QATOUCH_PROJECT_KEY}</QATOUCH_PROJECT_KEY>
+                        <QATOUCH_ASSIGN_TO>${env.QATOUCH_ASSIGN_TO}</QATOUCH_ASSIGN_TO>
+                        <QATOUCH_SYNC>${env.QATOUCH_SYNC}</QATOUCH_SYNC>
+                        <QATOUCH_CREATE_CASES>${env.QATOUCH_CREATE_CASES}</QATOUCH_CREATE_CASES>
+                        <QATOUCH_CREATE_TEST_RUN>${env.QATOUCH_CREATE_TEST_RUN}</QATOUCH_CREATE_TEST_RUN>
+                        <QATOUCH_TESTSUITE_ID>${env.QATOUCH_TESTSUITE_ID}</QATOUCH_TESTSUITE_ID>
+                        <QATOUCH_MILESTONE_NAME>${env.QATOUCH_MILESTONE_NAME}</QATOUCH_MILESTONE_NAME>
+                        <QATOUCH_MILESTONE_KEY>${env.QATOUCH_MILESTONE_KEY}</QATOUCH_MILESTONE_KEY>
+                        <QATOUCH_TAG>${env.QATOUCH_TAG}</QATOUCH_TAG>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
