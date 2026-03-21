@@ -47,26 +47,9 @@ public class QATouchClient {
      * @throws IOException if the API call fails
      */
     public List<JsonObject> getTestCases(String moduleKey) throws IOException {
-        List<JsonObject> all = new java.util.ArrayList<>();
-        int page = 1;
-        while (true) {
-            String endpoint = "/getAllTestCases/" + projectKey + "?moduleKey=" + enc(moduleKey) + "&page=" + page;
-            JsonElement response = request("GET", endpoint);
-            List<JsonObject> batch = normalizeList(response);
-            if (batch.isEmpty())
-                break;
-            all.addAll(batch);
-            int total = getMetaInt(response, "total");
-            if (total > 0 && all.size() >= total)
-                break;
-            int perPage = getMetaInt(response, "per_page");
-            if (perPage > 0 && batch.size() < perPage)
-                break;
-            page++;
-            if (page > 200)
-                break;
-        }
-        return all;
+        String endpoint = "/getAllTestCases/" + projectKey + "?moduleKey=" + enc(moduleKey) + "&page=1";
+        JsonElement response = request("GET", endpoint);
+        return normalizeList(response);
     }
 
     /**
@@ -103,25 +86,8 @@ public class QATouchClient {
      * @throws IOException if the API call fails
      */
     public List<JsonObject> getModules() throws IOException {
-        List<JsonObject> all = new java.util.ArrayList<>();
-        int page = 1;
-        while (true) {
-            JsonElement response = request("GET", "/getAllModules/" + projectKey + "?page=" + page);
-            List<JsonObject> batch = normalizeList(response);
-            if (batch.isEmpty())
-                break;
-            all.addAll(batch);
-            int total = getMetaInt(response, "total");
-            if (total > 0 && all.size() >= total)
-                break;
-            int perPage = getMetaInt(response, "per_page");
-            if (perPage > 0 && batch.size() < perPage)
-                break;
-            page++;
-            if (page > 50)
-                break;
-        }
-        return all;
+        JsonElement response = request("POST", "/getAllModules/" + projectKey);
+        return normalizeList(response);
     }
 
     /**
@@ -204,7 +170,6 @@ public class QATouchClient {
         sb.append("&milestoneKey=").append(enc(milestoneKey));
         sb.append("&testRun=").append(enc(title));
         sb.append("&assignTo=").append(enc(assignTo));
-        sb.append("&mode=automation");
         if (tags != null && !tags.isEmpty()) {
             sb.append("&tags=").append(enc(tags));
         }
@@ -232,51 +197,6 @@ public class QATouchClient {
     // ── Results ──────────────────────────────────────────────────────────
 
     /**
-     * Creates a test run from specific modules with mode=automation,
-     * so all automation test cases in those modules are included.
-     *
-     * @param milestoneKey the milestone key to associate
-     * @param title        the test run title
-     * @param assignTo     the user key to assign the run to
-     * @param moduleKeys   list of module keys to include
-     * @param tags         optional tags for the test run
-     * @return the created test run as a JSON object
-     * @throws IOException if the API call fails
-     */
-    public JsonObject createTestRunByModules(String milestoneKey, String title, String assignTo,
-            List<String> moduleKeys, String tags) throws IOException {
-        StringBuilder sb = new StringBuilder("/testRun/specific/module/mode");
-        sb.append("?projectKey=").append(enc(projectKey));
-        sb.append("&milestoneKey=").append(enc(milestoneKey));
-        sb.append("&testRun=").append(enc(title));
-        sb.append("&assignTo=").append(enc(assignTo));
-        sb.append("&mode=automation");
-        if (tags != null && !tags.isEmpty()) {
-            sb.append("&tags=").append(enc(tags));
-        }
-        for (String key : moduleKeys) {
-            sb.append("&moduleKey[]=").append(enc(key));
-        }
-        JsonElement response = request("POST", sb.toString());
-        List<JsonObject> list = normalizeList(response);
-        if (!list.isEmpty())
-            return list.get(0);
-        if (response.isJsonObject()) {
-            JsonObject obj = response.getAsJsonObject();
-            if (obj.has("data")) {
-                JsonElement data = obj.get("data");
-                if (data.isJsonArray() && data.getAsJsonArray().size() > 0) {
-                    return data.getAsJsonArray().get(0).getAsJsonObject();
-                }
-                if (data.isJsonObject())
-                    return data.getAsJsonObject();
-            }
-        }
-        return new JsonObject();
-    }
-
-    // ── Results ──────────────────────────────────────────────────────────
-    /**
      * Updates the status of multiple test run results in bulk.
      *
      * @param testRunKey the test run key
@@ -284,7 +204,6 @@ public class QATouchClient {
      * @return the API response as a JSON object
      * @throws IOException if the API call fails
      */
-
     public JsonObject updateResults(String testRunKey, List<CaseResult> results) throws IOException {
         JsonObject casesObj = new JsonObject();
         for (int i = 0; i < results.size(); i++) {
@@ -477,28 +396,6 @@ public class QATouchClient {
 
     private static String enc(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
-    }
-
-    private int getMetaInt(JsonElement response, String field) {
-        if (response != null && response.isJsonObject()) {
-            JsonObject obj = response.getAsJsonObject();
-            if (obj.has("meta") && obj.get("meta").isJsonObject()) {
-                JsonObject meta = obj.getAsJsonObject("meta");
-                if (meta.has(field)) {
-                    try {
-                        return meta.get(field).getAsInt();
-                    } catch (Exception e) {
-                        String s = meta.get(field).getAsString();
-                        try {
-                            return Integer.parseInt(s);
-                        } catch (NumberFormatException ignored) {
-                            // ignore
-                        }
-                    }
-                }
-            }
-        }
-        return 0;
     }
 
     // ── Helper class ─────────────────────────────────────────────────────
